@@ -1,3 +1,5 @@
+#include <ctype.h>
+#include <stdio.h>
 #include <unistd.h>
 #include <termios.h>
 #include <stdlib.h>
@@ -13,7 +15,7 @@ void enableRawMode() {
     atexit(disableRawMode);
 
     struct termios raw = orig_termios;
-    raw.c_lflag &= ~(ECHO);
+    raw.c_lflag &= ~(ECHO | ICANON);
 
     tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw);
 }
@@ -23,6 +25,13 @@ int main() {
 
     char c;
     // Read from standard input byte by byte, enter 'q' to quit
-    while (read(STDIN_FILENO, &c, 1) == 1 && c != 'q');
+    while (read(STDIN_FILENO, &c, 1) == 1 && c != 'q') {
+        // Only print out printable characters
+        if (iscntrl(c)) {
+            printf("%d\n", c);
+        } else {
+            printf("%d ('%c')\n", c, c);
+        }
+    }
     return 0;
 }
