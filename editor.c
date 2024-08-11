@@ -3,10 +3,12 @@
 #include <unistd.h>
 #include <termios.h>
 #include <stdlib.h>
+#include <string.h>
 #include <errno.h>
 #include <sys/ioctl.h>
 
 #define CTRL_KEY(k) ((k) & 0x1f)
+#define APPBUF_INIT {NULL, 0}
 
 struct editorConfig {
     int screenrows;
@@ -16,6 +18,26 @@ struct editorConfig {
 };
 
 struct editorConfig editor;
+
+// Dynamic buffer
+struct appBuf {
+    char *b;
+    int len;
+};
+
+void bAppend(struct appBuf *ab, const char *s, int len) {
+    // Rezise the existing buffer to accomodate additional len bytes
+    char *new = realloc(ab->b, ab->len + len);
+
+    if (new == NULL) return;
+    memcpy(&new[ab->len], s, len);
+    ab->b = new;
+    ab->len += len;
+}
+
+void bFree(struct appBuf *ab) {
+    free(ab->b);
+}
 
 void crash(const char *s) {
     write(STDOUT_FILENO, "\x1b[2J", 4);
@@ -123,27 +145,34 @@ void editorProcessKeypress() {
     }
 }
 
-void editorDrawRows() {
+void editorDrawRows(struct appBuf *ab) {
     int y;
     for (y = 0; y < editor.screenrows; y++) {
-        write(STDOUT_FILENO, "~", 1);
+        bAppend(ab, "~", 1);
 
         if (y < editor.screenrows - 1) {
-            write(STDOUT_FILENO, "\r\n", 2);
+            bAppend(ab, "\r\n", 2);
         }
     }
 }
 
 void editorRefreshScreen() {
+    struct appBuf ab = APPBUF_INIT;
+    bAppend(&ab, "\x1b[?25l", 6);
+
     // Clear entire screen
-    write(STDOUT_FILENO, "\x1b[2J", 4);
+    bAppend(&ab, "\x1b[2J", 4);
 
     // Position cursor to top-left corner
-    write(STDOUT_FILENO, "\x1b[H", 3);
+    bAppend(&ab, "\x1b[H", 3);
 
-    editorDrawRows();
+    editorDrawRows(&ab);
 
-    write(STDOUT_FILENO, "\x1b[H", 3);
+    bAppend(&ab, "\x1b[H", 3);
+    bAppend(&ab, "\x1b[?25h", 6);
+
+    write(STDOUT_FILENO, ab.b, ab.len);
+    bFree(&ab);
 }
 
 void initEditor() {
