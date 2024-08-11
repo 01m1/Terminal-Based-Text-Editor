@@ -4,12 +4,23 @@
 #include <termios.h>
 #include <stdlib.h>
 #include <errno.h>
+#include <sys/ioctl.h>
 
 #define CTRL_KEY(k) ((k) & 0x1f)
 
-struct termios orig_termios;
+struct editorConfig {
+    int screenrows;
+    int screencols;
+
+    struct termios orig_termios;
+};
+
+struct editorConfig editor;
 
 void crash(const char *s) {
+    write(STDOUT_FILENO, "\x1b[2J", 4);
+    write(STDOUT_FILENO, "\x1b[H", 3);
+
     // Print descriptive error
     perror(s);
     exit(1);
@@ -17,16 +28,16 @@ void crash(const char *s) {
 
 void disableRawMode() {
     // Check if tcsetattr() returns -1 (when an error occurs) and return error message
-    if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &orig_termios) == -1) crash("tcsetattr");
+    if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &editor.orig_termios) == -1) crash("tcsetattr");
 }
 
 void enableRawMode() {
-    if (tcgetattr(STDIN_FILENO, &orig_termios) == -1) crash("tcgetattr");
+    if (tcgetattr(STDIN_FILENO, &editor.orig_termios) == -1) crash("tcgetattr");
 
     // Register function that executes when the program exits normally
     atexit(disableRawMode);
 
-    struct termios raw = orig_termios;
+    struct termios raw = editor.orig_termios;
     // c_lflag contains various local mode flags that control terminal behaviour
     // &= ~ (Bitwise AND with a NOT to flip specific switches in the c_lflag)
 
@@ -50,25 +61,102 @@ void enableRawMode() {
     // maximum amount of time to wait before read() returns
     raw.c_cc[VTIME] = 1;
 
-    if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &orig_termios) == -1) crash("tcsetattr");
+    if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &editor.orig_termios) == -1) crash("tcsetattr");
+}
+
+char editorReadKey() {
+    int nread;
+    char c;
+    while ((nread = read(STDIN_FILENO, &c, 1)) != 1) {
+        if (nread == -1 && errno != EAGAIN) crash("read");
+    }
+    return c;
+}
+
+int getCursorPosition(int *rows, int *cols) {
+    // Hold respond of terminal in buffer and keep track of position in buffer
+    char buf[32];
+    unsigned int i = 0;
+
+    // Send escape sequence to request cursor position
+    if (write(STDOUT_FILENO, "\x1b[6n", 4) != 4) return -1;
+
+    // Read response from standard input
+    while (i < sizeof(buf) - 1) {
+        if (read(STDIN_FILENO, &buf[i], 1) != 1) break;
+        if (buf[i] == 'R') break;
+        i++;
+    }
+    buf[i] = '\0';
+    
+    // Check if response starts with the expected escape sequence
+    if (buf[0] != '\x1b' || buf[1] != '[') return -1;
+
+    // Parse row and column numbers from response
+    if (sscanf(&buf[2], "%d;%d", rows, cols) != 2) return -1;
+
+    return 0;
+}
+
+int getWindowSize(int *rows, int *cols) {
+    struct winsize ws;
+
+    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == -1 || ws.ws_col == 0) {
+        // Go to bottom right of screen and fill up 
+        if (write(STDOUT_FILENO, "\x1b[999C\x1b[999B", 12) != 12) return -1;
+        return getCursorPosition(rows, cols);
+    } else {
+        *cols = ws.ws_col;
+        *rows = ws.ws_row;
+        return 0;
+    }
+}
+
+void editorProcessKeypress() {
+    char c = editorReadKey();
+    switch (c) {
+        case CTRL_KEY('q'):
+            write(STDOUT_FILENO, "\x1b[2J", 4);
+            write(STDOUT_FILENO, "\x1b[H", 3);
+            exit(0);
+            break;
+    }
+}
+
+void editorDrawRows() {
+    int y;
+    for (y = 0; y < editor.screenrows; y++) {
+        write(STDOUT_FILENO, "~", 1);
+
+        if (y < editor.screenrows - 1) {
+            write(STDOUT_FILENO, "\r\n", 2);
+        }
+    }
+}
+
+void editorRefreshScreen() {
+    // Clear entire screen
+    write(STDOUT_FILENO, "\x1b[2J", 4);
+
+    // Position cursor to top-left corner
+    write(STDOUT_FILENO, "\x1b[H", 3);
+
+    editorDrawRows();
+
+    write(STDOUT_FILENO, "\x1b[H", 3);
+}
+
+void initEditor() {
+    if (getWindowSize(&editor.screenrows, &editor.screencols) == -1) crash("getWindowSize");
 }
 
 int main() {
     enableRawMode();
+    initEditor();
 
-    // Read from standard input byte by byte, enter 'q' to quit
     while (1) {
-        char c = '\0';
-        // Error handling
-        if (read(STDIN_FILENO, &c, 1) == -1 && errno != EAGAIN) crash("read");
-
-        // Only print out printable characters
-        if (iscntrl(c)) {
-            printf("%d\r\n", c);
-        } else {
-            printf("%d ('%c')\r\n", c, c);
-        }
-        if (c == CTRL_KEY('q')) break;
+        editorRefreshScreen();
+        editorProcessKeypress();
     }
 
     return 0;
