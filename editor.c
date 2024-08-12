@@ -11,6 +11,9 @@
 #define APPBUF_INIT {NULL, 0}
 
 struct editorConfig {
+    // Cursor positions
+    int cx, cy;
+
     int screenrows;
     int screencols;
 
@@ -134,13 +137,37 @@ int getWindowSize(int *rows, int *cols) {
     }
 }
 
+void editorMoveCursor(char key) {
+    switch (key) {
+        case 'a':
+            editor.cx--;
+            break;
+        case 'd':
+            editor.cx++;
+            break;
+        case 'w':
+            editor.cy--;
+            break;
+        case 's':
+            editor.cy++;
+            break;
+    }
+}
+
 void editorProcessKeypress() {
     char c = editorReadKey();
     switch (c) {
-        case CTRL_KEY('q'):
+        case CTRL_KEY('b'):
             write(STDOUT_FILENO, "\x1b[2J", 4);
             write(STDOUT_FILENO, "\x1b[H", 3);
             exit(0);
+            break;
+
+        case 'w':
+        case 's':
+        case 'a':
+        case 'd':
+            editorMoveCursor(c);
             break;
     }
 }
@@ -148,8 +175,24 @@ void editorProcessKeypress() {
 void editorDrawRows(struct appBuf *ab) {
     int y;
     for (y = 0; y < editor.screenrows; y++) {
-        bAppend(ab, "~", 1);
+        if (y == editor.screenrows / 3) {
+            char welcome[80];
+            int welcomelen = snprintf(welcome, sizeof(welcome),
+                "Welcome");
+            if (welcomelen > editor.screencols) welcomelen = editor.screencols;
+            // Move welcome message to center of screen.
+            int padding = (editor.screencols - welcomelen) / 2;
+            if (padding) {
+                bAppend(ab, "~", 1);
+                padding--;
+            }
+            while (padding--) bAppend(ab, " ", 1);
+            bAppend(ab, welcome, welcomelen);
+        } else {
+            bAppend(ab, "~", 1);
+        }
 
+        bAppend(ab, "\x1b[K", 3);
         if (y < editor.screenrows - 1) {
             bAppend(ab, "\r\n", 2);
         }
@@ -160,15 +203,15 @@ void editorRefreshScreen() {
     struct appBuf ab = APPBUF_INIT;
     bAppend(&ab, "\x1b[?25l", 6);
 
-    // Clear entire screen
-    bAppend(&ab, "\x1b[2J", 4);
-
     // Position cursor to top-left corner
     bAppend(&ab, "\x1b[H", 3);
 
     editorDrawRows(&ab);
 
-    bAppend(&ab, "\x1b[H", 3);
+    char buf[32];
+    snprintf(buf, sizeof(buf), "\x1b[%d;%dH]", editor.cy + 1, editor.cx + 1);
+    bAppend(&ab, buf, strlen(buf));
+
     bAppend(&ab, "\x1b[?25h", 6);
 
     write(STDOUT_FILENO, ab.b, ab.len);
@@ -176,6 +219,9 @@ void editorRefreshScreen() {
 }
 
 void initEditor() {
+    editor.cx = 0;
+    editor.cy = 0;
+
     if (getWindowSize(&editor.screenrows, &editor.screencols) == -1) crash("getWindowSize");
 }
 
