@@ -15,6 +15,9 @@ enum editorKey {
     RIGHT,
     UP,
     DOWN,
+    DEL,
+    HOME,
+    END,
     PAGE_UP,
     PAGE_DOWN
 };
@@ -116,19 +119,30 @@ int editorReadKey() {
                 if (read(STDIN_FILENO, &seq[2], 1) != 1) return '\x1b';
                 if (seq[2] == '~') {
                     switch (seq[1]) {
+                        case '1': return HOME;
+                        case '3': return DEL;
+                        case '4': return END;
                         case '5': return PAGE_UP;
                         case '6': return PAGE_DOWN;
+                        case '7': return HOME;
+                        case '8': return END;
                     }
                 }
-            }
-        } else {
+            } else {
                 switch (seq[1])
                 {
                     case 'A': return UP;
                     case 'B': return DOWN;
                     case 'C': return RIGHT;
                     case 'D': return LEFT;
+                    case 'H': return HOME;
+                    case 'F': return END;
                 }
+            }
+        } else if (seq[0] == 'O') {
+            switch (seq[1]) {
+                case 'H': return HOME;
+                case 'F': return END;
             }
         }
         return '\x1b';
@@ -210,12 +224,20 @@ void editorProcessKeypress() {
             write(STDOUT_FILENO, "\x1b[H", 3);
             exit(0);
             break;
+        
+        case HOME:
+            editor.cx = 0;
+            break;
+
+        case END:
+            editor.cx = editor.screencols - 1;
+            break;
 
         case PAGE_UP:
         case PAGE_DOWN:
             {
                 int time = editor.screenrows;
-                while (times--) editorMoveCursor(c == PAGE_UP ? UP : DOWN);
+                while (time--) editorMoveCursor(c == PAGE_UP ? UP : DOWN);
             }
             break;
         case UP:
