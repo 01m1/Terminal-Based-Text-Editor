@@ -10,6 +10,15 @@
 #define CTRL_KEY(k) ((k) & 0x1f)
 #define APPBUF_INIT {NULL, 0}
 
+enum editorKey {
+    LEFT = 1000,
+    RIGHT,
+    UP,
+    DOWN,
+    PAGE_UP,
+    PAGE_DOWN
+};
+
 struct editorConfig {
     // Cursor positions
     int cx, cy;
@@ -89,14 +98,45 @@ void enableRawMode() {
     if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &editor.orig_termios) == -1) crash("tcsetattr");
 }
 
-char editorReadKey() {
+int editorReadKey() {
     int nread;
     char c;
     while ((nread = read(STDIN_FILENO, &c, 1)) != 1) {
         if (nread == -1 && errno != EAGAIN) crash("read");
     }
-    return c;
+
+    if (c == '\x1b') {
+        char seq[3];
+
+        if (read(STDIN_FILENO, &seq[0], 1) != 1) return '\x1b';
+        if (read(STDIN_FILENO, &seq[1], 1) != 1) return '\x1b';
+
+        if (seq[0] == '[') {
+            if (seq[1] >= '0' && seq[1] <= '9') {
+                if (read(STDIN_FILENO, &seq[2], 1) != 1) return '\x1b';
+                if (seq[2] == '~') {
+                    switch (seq[1]) {
+                        case '5': return PAGE_UP;
+                        case '6': return PAGE_DOWN;
+                    }
+                }
+            }
+        } else {
+                switch (seq[1])
+                {
+                    case 'A': return UP;
+                    case 'B': return DOWN;
+                    case 'C': return RIGHT;
+                    case 'D': return LEFT;
+                }
+            }
+        }
+        return '\x1b';
+    } else {
+        return c;
+    }
 }
+
 
 int getCursorPosition(int *rows, int *cols) {
     // Hold respond of terminal in buffer and keep track of position in buffer
@@ -137,25 +177,33 @@ int getWindowSize(int *rows, int *cols) {
     }
 }
 
-void editorMoveCursor(char key) {
+void editorMoveCursor(int key) {
     switch (key) {
-        case 'a':
-            editor.cx--;
+        case LEFT:
+            if (editor.cx != 0) {
+                editor.cx--;
+            }
             break;
-        case 'd':
-            editor.cx++;
+        case RIGHT:
+            if (editor.cx != editor.screencols - 1) {
+                editor.cx++;
+            }     
             break;
-        case 'w':
-            editor.cy--;
+        case UP:
+            if (editor.cy != 0) {
+                    editor.cy--;
+            }
             break;
-        case 's':
-            editor.cy++;
-            break;
+        case DOWN:
+            if (editor.cy != editor.screenrows - 1) {
+                editor.cy++;
+                break;
+            }         
     }
 }
 
 void editorProcessKeypress() {
-    char c = editorReadKey();
+    int c = editorReadKey();
     switch (c) {
         case CTRL_KEY('b'):
             write(STDOUT_FILENO, "\x1b[2J", 4);
@@ -163,10 +211,17 @@ void editorProcessKeypress() {
             exit(0);
             break;
 
-        case 'w':
-        case 's':
-        case 'a':
-        case 'd':
+        case PAGE_UP:
+        case PAGE_DOWN:
+            {
+                int time = editor.screenrows;
+                while (times--) editorMoveCursor(c == PAGE_UP ? UP : DOWN);
+            }
+            break;
+        case UP:
+        case DOWN:
+        case LEFT:
+        case RIGHT:
             editorMoveCursor(c);
             break;
     }
