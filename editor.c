@@ -1,3 +1,7 @@
+#define _DEFAULT_SOURCE
+#define _BSD_SOURCE
+#define _GNU_SOURCE
+
 #include <ctype.h>
 #include <stdio.h>
 #include <unistd.h>
@@ -6,6 +10,7 @@
 #include <string.h>
 #include <errno.h>
 #include <sys/ioctl.h>
+#include <sys/types.h>
 
 #define CTRL_KEY(k) ((k) & 0x1f)
 #define APPBUF_INIT {NULL, 0}
@@ -22,12 +27,20 @@ enum editorKey {
     PAGE_DOWN
 };
 
+typedef struct editorRow {
+    int size;
+    char *chars;
+}   editorRow;
+
 struct editorConfig {
     // Cursor positions
     int cx, cy;
 
     int screenrows;
     int screencols;
+    
+    int numrows;
+    editorRow row;
 
     struct termios orig_termios;
 };
@@ -191,6 +204,28 @@ int getWindowSize(int *rows, int *cols) {
     }
 }
 
+void editorOpen(char *filename) {
+    FILE *fp = fopen(filename, "r");
+    if (!fp) crash("fopen");
+
+    char *line = NULL;
+    size_t linecap = 0;
+    ssize_t linelen;
+    
+    // Read file
+    linelen = getline(&line, &linecap, fp);
+    if (linelen != -1) {
+        while (linelen > 0 && (line[linelen - 1] == '\n' || line[linelen - 1] == '\r')) linelen--;
+        editor.row.size = linelen;
+        editor.row.chars = malloc(linelen + 1);
+        memcpy(editor.row.chars, line, linelen);
+        editor.row.chars[linelen] = '\0';
+        editor.numrows = 1;
+    }
+    free(line);
+    fclose(fp);
+}
+
 void editorMoveCursor(int key) {
     switch (key) {
         case LEFT:
@@ -252,21 +287,27 @@ void editorProcessKeypress() {
 void editorDrawRows(struct appBuf *ab) {
     int y;
     for (y = 0; y < editor.screenrows; y++) {
-        if (y == editor.screenrows / 3) {
-            char welcome[80];
-            int welcomelen = snprintf(welcome, sizeof(welcome),
-                "Welcome");
-            if (welcomelen > editor.screencols) welcomelen = editor.screencols;
-            // Move welcome message to center of screen.
-            int padding = (editor.screencols - welcomelen) / 2;
-            if (padding) {
+        if (y >= editor.numrows) {
+            if (y == editor.screenrows / 3) {
+                char welcome[80];
+                int welcomelen = snprintf(welcome, sizeof(welcome),
+                    "Welcome");
+                if (welcomelen > editor.screencols) welcomelen = editor.screencols;
+                // Move welcome message to center of screen.
+                int padding = (editor.screencols - welcomelen) / 2;
+                if (padding) {
+                    bAppend(ab, "~", 1);
+                    padding--;
+                }
+                while (padding--) bAppend(ab, " ", 1);
+                bAppend(ab, welcome, welcomelen);
+            } else {
                 bAppend(ab, "~", 1);
-                padding--;
             }
-            while (padding--) bAppend(ab, " ", 1);
-            bAppend(ab, welcome, welcomelen);
         } else {
-            bAppend(ab, "~", 1);
+            int len = editor.row.size;
+            if (len > editor.screencols) len = editor.screencols;
+            bAppend(ab, editor.row.chars, len);
         }
 
         bAppend(ab, "\x1b[K", 3);
@@ -298,13 +339,17 @@ void editorRefreshScreen() {
 void initEditor() {
     editor.cx = 0;
     editor.cy = 0;
+    editor.numrows = 0;
 
     if (getWindowSize(&editor.screenrows, &editor.screencols) == -1) crash("getWindowSize");
 }
 
-int main() {
+int main(int argc, char *argv[]) {
     enableRawMode();
     initEditor();
+    if (argc >= 2) {
+        editorOpen(argv[1]);
+    }
 
     while (1) {
         editorRefreshScreen();
