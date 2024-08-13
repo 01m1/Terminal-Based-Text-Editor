@@ -288,7 +288,7 @@ void editorDrawRows(struct appBuf *ab) {
     int y;
     for (y = 0; y < editor.screenrows; y++) {
         if (y >= editor.numrows) {
-            if (y == editor.screenrows / 3) {
+            if (editor.numrows == 0 && y == editor.screenrows / 3) {
                 char welcome[80];
                 int welcomelen = snprintf(welcome, sizeof(welcome),
                     "Welcome");
